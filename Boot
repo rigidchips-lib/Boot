@@ -1,0 +1,290 @@
+local isEnableLog = loadlib and true or false
+local _format = string.format
+local success, failure = 0, 0;
+local logFile = nil
+local time1, time2
+
+_Boot = {}
+	_Boot.loaded = {}			--Load済みの情報をぶちこんでおくよ
+	_Boot.isLoadFailure = false	--失敗したらtrueになるよ
+	_Boot.failure = 0			--失敗の数
+	_Boot.safeFailure = 0		--許容される失敗の数
+	_Boot.success = 0			--成功の数
+	_Boot.total = 0				--総試行ファイル数
+	_Boot.outputPath = "./logs"	--標準の出力先
+	_Boot.indentLevel = 0;
+
+----[標準Spirytus初期化]--
+
+--グローバル環境にInitSpirytusがあるならそっちに任せます。
+--ログ出力のためにSpirytusを呼ぶ必要があるので、必ず初期化してください。
+local InitSpirytus = function ()
+	spirytus = spirytus or {};
+	open_spirytus, err = loadlib("./Spirytus.DLL", "rc_OpenSpirytus");
+	if type(open_spirytus)=="function" then
+		open_spirytus();
+		DeleteAllObject();
+		ReleaseAllBitmap();
+		DestroyWindow()
+		_SPIRYTUS = true;
+		for i = 0, 15 do
+			_EXFCLOSE(i);
+		end
+	else
+		_SPIRYTUS = false
+	end
+end
+local InitSmirnoff = function()
+	smirnoff = smirnoff or {};
+	open_smirnoff, err = loadlib("./Smirnoff.DLL", "sm_OpenSmirnoff");
+	if type(open_smirnoff) == "function" then
+		pcall(open_smirnoff, _BACKBUFFER)
+	end
+end
+local InitExtraAnalog = function()
+	load_exAnalog, err = loadlib("./ExtraAnalog.DLL", "ex_OpenExtraAnalog");
+	if type(load_exAnalog) == "function" then
+		pcall(load_exAnalog);
+	end
+end
+local InitNATSound = function()
+	load_natsound, err = loadlib("./NATSound.DLL", "Load");
+	if type(load_natsound) == "function" then
+		pcall(load_natsound, _SoundProfile);
+	end
+end
+----[ログ入出力]----------
+
+local write = function (str)
+	if isEnableLog then _EXFPUTS(logFile,str) end
+	if print then print(str) end	--コマンド版Luaなら文字列出力
+end
+
+local open = function ()
+	if isEnableLog then
+		local sp_open = _G.InitSpirytus or InitSpirytus
+		sp_open()
+		InitSmirnoff();
+		InitExtraAnalog();
+		InitNATSound();
+		if _SPIRYTUS then
+			if SPIRYTUS_VERSION >= 0.53 then
+				MakeDirectory("./logs");
+			end
+			logFile, isEnableLog =  create_file();
+			
+			--ログのヘッダ？部分の記述
+			--書式は概ねKometからパクってきたよ！！
+			write_header(logFile);
+			
+			_Boot.BeginTime = GetTickCount()
+		else
+			isEnableLog = false
+		end
+	end
+end
+
+local close = function ()
+	if isEnableLog then
+		write_horizontalLine(logFile)
+		--ログのフッタ？部分の記述
+		_Boot.EndTime = GetTickCount()
+		write_footer(logFile);
+		_EXFCLOSE(logFile)		
+	end	
+	_Boot.isLoadFailure = (_Boot.failure-_Boot.safeFailure)>0
+end
+
+-------------------------------------------------------------
+--此処から書き換えOK
+function create_file()
+	logFile = _EXFOPEN( _Boot.outputPath.."/common_bootlog2.txt", "w" )
+	isEnableLog = logFile >= 0;
+	return logFile, isEnableLog;
+end
+function write_header(fp)
+	write( "common_bootlog\n" )
+	write( _format("Lua version : %s\n",_VERSION) )
+	write( _format("Spiritus version : %f\n",spirytus.version) )
+	if SMIRNOFF_VERSION then		
+		write( _format("Smirnoff version : %f\n",SMIRNOFF_VERSION) )
+	end
+end
+
+function write_footer(fp)
+	write( _format("Erapsed %d[ms] in loading\n",_Boot.EndTime-_Boot.BeginTime) )
+	write( _format(
+		"Total %d files ( success %d / failure %d[%d] )\n",
+		_Boot.total,
+		_Boot.success,
+		_Boot.failure,
+		_Boot.safeFailure
+		) )
+	if _Boot.failure>0 then
+		write( "Boot failed" )
+	end
+end
+
+function write_horizontalLine(fp)
+	write( _format("%s%s\n", createIndent(), string.rep("-", 80)));
+end
+function write_horizontalLine2(fp)
+	write( _format("%s%s\n", createIndent(), string.rep(".", 80)));
+end
+function write_beginLibary(fp, libName, fileName, result, err)
+	if result == "OK" then
+		write( _format( "%sOK : Loader definiton ( %s ) is loaded.\n",createIndent(), fileName ) )
+	elseif result == "Safe" then
+		--無意味
+	elseif result == "Error" then
+		write( _format( "%sError : Loader definiton ( %s ) is not loaded.\n", createIndent(), fileName ) )
+		write( _format( "%s%s\n",createIndent(), err ) )
+	end
+end
+function write_endLibrary(fp, libName, fileName)
+	write(_format("%sSystem: Finished loading \"%s\"\n", createIndent(), libName));
+end
+function write_beginDependancy(fp, libName, dependancy)
+	write( _format("%sSystem : This library depends on \"%s\"\n", createIndent(), dependancy));
+end
+function write_endDependancy(fp)
+	write(_format("%sSystem : Dependancy resolved\n", createIndent()));
+end
+function write_fileLoaded(fp, fileName, result, err)
+	if result == "OK" then
+		write( _format( "%sOK : %s\n", createIndent(), fileName ) )
+	elseif result == "Safe" then
+		write( _format( "%sSafe : %s\n", createIndent(), err ) )
+	elseif result == "Error" then
+		write( _format( "%sError : %s\n", createIndent(), err ) )
+	end
+end
+function createIndent()
+	return string.rep("\t", _Boot.indentLevel);
+end
+-------------此処までが書き換えの範囲
+pcall(require,"shared/LoggerSetting.lua")	--独自設定したいならこっちに書くんだ！
+
+----[requireへの仕込み]---
+_require = _G.require;
+require = function (path,isSafe,isLoader,maxVer)
+	_MAXVER = maxVer;
+	local b, err = pcall( _G._require, path )
+	_Boot.total = _Boot.total+1	
+	if isLoader then
+		local libName = string.sub(path, 1, -5);
+		if b then
+			write_horizontalLine(logFile);
+			write_beginLibary(logFile, libName, path, "OK", err);
+			_Boot.success = _Boot.success+1
+			return b, err
+		else
+			write_horizontalLine(logFile);
+			write_beginLibary(logFile, libName, path, "Error", err);
+			_Boot.failure = _Boot.failure+1
+			return b, err
+		end
+	else
+		if b then
+			write_fileLoaded(logFile, path, "OK", err);
+			_Boot.success = _Boot.success+1
+			return true, err
+		elseif isSafe then
+			write_fileLoaded(logFile, path, "Safe", err);
+			_Boot.failure = _Boot.failure+1
+			_Boot.safeFailure = _Boot.safeFailure+1
+			return false, err
+		else
+			write_fileLoaded(logFile, path, "Error", err);
+			
+			_Boot.failure = _Boot.failure+1
+			return false, err
+		end
+	end
+end
+redirect = function(path, isSafe, isLoader, maxVer)
+	local Folder = string.gsub(_REQUIREDNAME,"^(.*/).*$","%1");
+	require(Folder..path, isSafe, isLoader, maxVer);
+end
+--------------------------
+function execLoader(moduleName)
+	local maxVer = 0;
+	if type(moduleName) == "table" then
+		maxVer = moduleName[2];
+		moduleName = moduleName[1];
+	end
+	local loaderName = moduleName.."/loader.lua";
+	local b, fileList = require(loaderName, false, true, maxVer);
+	local libName;
+	_Boot.indentLevel = _Boot.indentLevel + 1;
+	if b and type(fileList) == "table" then
+		libName = fileList.name or moduleName;
+		if fileList.depends then
+			resolveDependancy(libName, fileList.depends);--依存ライブラリを読み込む
+		end
+		
+		for n = 1, table.getn(fileList) do--ローダに指定されたファイルを順に読み込んでいく
+			local libPath = string.format("%s/%s", moduleName , fileList[n][1]);
+			local isSafe = fileList[n][2]
+			if string.sub(libPath, -3) == "lua" then				
+				local b, result;
+				if type(fileList[n][3]) == "number" then
+					b, result = require(libPath, isSafe, false, fileList[n][3]);
+				else
+					b, result = require(libPath, isSafe, false, maxVer);
+				end
+				table.insert(
+					_Boot.loaded,
+					{
+						libName;	--リストに書いてある名前
+						libPath;	--合成してrequireに突っ込んだ完全名
+						b;		--成功したかどうかのフラグ
+						isSafe;		--失敗を許容する設定かどうかのフラグ
+						fileList[n][3]; --仕様外だけどコメントつけたければどーぞ使ってな領域
+					}
+				)
+				_Boot.loaded[moduleName] = 
+				{
+					libPath;	--合成してrequireに突っ込んだ完全名
+					b;		--成功したかどうかのフラグ
+					isSafe;		--失敗を許容する設定かどうかのフラグ
+					fileList[n][3]; --仕様外だけどコメントつけたければどーぞ使ってな領域
+				}
+			else
+				local oldMaxVer = maxVer;
+				if type(fileList[n][3]) == "number" then
+					libPath = {libPath, fileList[n][3]};
+				end
+				execLoader(libPath);
+				maxVer = oldMaxVer;
+			end
+		end
+	elseif b and not type(fileList) ~= "table" then
+		write_fileLoaded(logFile, loaderName, "Error", "loader.lua is found, but invalid list")
+	else
+		
+	end
+	write_endLibrary(logFile, moduleName, loaderName);
+	_Boot.indentLevel = _Boot.indentLevel - 1;
+end
+function resolveDependancy(parent, depends)
+	for i, libName in ipairs(depends) do		
+		write_beginDependancy(logFile, parent, libName);
+		if not _Boot.loaded[libName] then
+			execLoader(libName);
+		end
+	end
+	write_endDependancy(logFile, parent);
+	write_horizontalLine2(logFile);
+end
+return function (path_list)
+
+	open()
+	
+	for i,path in ipairs(path_list) do
+		execLoader(path);
+	end
+	
+	close()
+	_G.require = _require;
+end
