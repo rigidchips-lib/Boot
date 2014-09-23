@@ -8,7 +8,7 @@ RigidChipsのライブラリ用総合ローダー
 * ディレクトリが深いライブラリを読み込んだ場合でもエラーメッセージを読み取ることが可能
 
 ##導入方法
-1. RigidChips15B26.exeと同じディレクトリにBoot.zipを解凍する
+1. RigidChips15B26.exeと同じディレクトリにCloneする(Zipから解凍する場合は./Equa-master/setup.batとなるようにディレクトリ構造を編集)
 2. Boot/の中のsetup.batを管理者権限で実行する（自動的にlibフォルダが同じディレクトリに作られ，環境変数LUA_PATHの設定も行われる）
 3. おわり
 
